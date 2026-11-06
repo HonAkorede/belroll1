@@ -65,7 +65,8 @@ function WalletStrip({ disabled }: { disabled: boolean }) {
   const onNetwork = connected && chainId === CHAIN_ID;
   // EIP-6963 wallets announce themselves; keep the generic injected fallback only when none did.
   const named = connectors.filter(c => c.id !== 'injected');
-  const choices = named.length ? named : connectors;
+  // The generic connector only works when a wallet injected window.ethereum.
+  const choices = named.length ? named : 'ethereum' in window ? connectors : [];
   const error = connectError ?? switchError;
   return <>
     <section className={`wallet-strip ${onNetwork ? 'is-connected' : ''}`} aria-labelledby="wallet-title">
@@ -73,7 +74,7 @@ function WalletStrip({ disabled }: { disabled: boolean }) {
       {connected ? <div className="wallet-actions">{!onNetwork && <button className="button primary" disabled={disabled || switching} onClick={() => switchChain({ chainId: CHAIN_ID })}>{switching ? 'Switching…' : `Switch to ${NETWORK.label}`}</button>}<button className="button secondary compact" disabled={disabled} onClick={() => disconnect()}>Disconnect</button></div>
         : <div className="wallet-actions">{choices.map(c => <button key={c.uid} className="button primary" onClick={() => connect({ connector: c, chainId: CHAIN_ID })} disabled={isPending || disabled}><Icon name="wallet"/>{isPending ? 'Connecting…' : choices.length > 1 ? c.name : 'Connect wallet'}{!isPending && <Icon name="arrow" size={16}/>}</button>)}</div>}
     </section>
-    {!connected && !choices.length && <div className="notice warning" role="alert"><Icon name="info"/><div>No browser wallet was found. Install MetaMask, Coinbase Wallet or Rabby, then reload this page.</div></div>}
+    {!connected && !choices.length && <div className="notice warning" role="alert"><Icon name="info"/><div>No wallet extension was found in this browser. Open this page in Chrome, Brave or Edge with MetaMask, Coinbase Wallet or Rabby installed, then reload. Localhost works; it does not need to be deployed.</div></div>}
     {error && <div className="notice warning" role="alert"><Icon name="info"/><div>{paymentError(error)}</div></div>}
   </>;
 }

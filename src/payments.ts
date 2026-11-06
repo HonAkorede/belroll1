@@ -154,6 +154,8 @@ export const isRejection = (error: unknown) => causes(error).some(e => e.code ==
 export function paymentError(error: unknown): string {
   const chain = causes(error);
   if (isRejection(error)) return 'Declined in wallet. No further payments were requested. Resume when you are ready.';
+  if (chain.some(e => e.name === 'ProviderNotFoundError')) return 'No wallet extension was found in this browser. Install MetaMask, Coinbase Wallet or Rabby, then reload.';
+  if (chain.some(e => e.code === -32002)) return 'Your wallet already has a request open. Open the wallet extension to approve or reject it.';
   if (chain.some(e => e.name === 'ChainMismatchError' || e.code === 4902)) return `Switch your wallet to ${NETWORK.label}, then resume.`;
   if (chain.some(e => e.name === 'InsufficientFundsError')) return `This wallet needs ${NETWORK.label} ETH for gas. Add some, then resume.`;
   if (chain.some(e => e.name === 'WaitForTransactionReceiptTimeoutError' || e.name === 'WaitForCallsStatusTimeoutError')) return 'The transaction has not confirmed yet. Keep this browser open and resume to check it again.';
