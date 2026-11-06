@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { privateKeyToAddress } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
 import { parseCsv } from '../src/csv';
-import { createPaymentSender, PaymentJournal, preparePayments, sendSequentially, type ChainClient, type JournalStorage, type PaymentRow } from '../src/payments';
+import { createPaymentSender, PaymentJournal, paymentError, preparePayments, sendSequentially, type ChainClient, type JournalStorage, type PaymentRow } from '../src/payments';
 import { CHAIN_ID, JOURNAL_KEY, NETWORK, RECOVERY_WINDOW_MS } from '../src/config';
 import { generateKeys, stealthPrivateKey, type StealthPayment } from '../src/stealth';
 
@@ -227,4 +227,10 @@ test('a deliberate new pay run reference gets separate keys and fresh one-time a
   const s = await setup(); const next = await preparePayments({ ...s, reference: 'November payroll' });
   assert.notEqual(next.rows[0].key, s.prepared.rows[0].key);
   assert.notEqual(next.rows[0].stealthAddress, s.prepared.rows[0].stealthAddress);
+});
+
+test('explains missing gas however the wallet words it', () => {
+  const ethers = new Error('insufficient funds for intrinsic transaction cost (info={ "error": { "code": -32003 } }, code=INSUFFICIENT_FUNDS)');
+  for (const error of [ethers, { code: -32003, message: 'insufficient funds for gas * price + value' }, Object.assign(new Error('wrapped', { cause: ethers }), { shortMessage: 'x' })])
+    assert.match(paymentError(error), /no Base Sepolia ETH for gas/);
 });

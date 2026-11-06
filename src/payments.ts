@@ -144,7 +144,7 @@ export function remainingAtomic(rows: PaymentRow[]) {
   return rows.filter(r => r.status !== 'sent' && r.status !== 'transferred').reduce((total, r) => total + BigInt(r.atomic), 0n);
 }
 
-function causes(error: unknown): { code?: unknown; name?: unknown; shortMessage?: unknown }[] {
+function causes(error: unknown): { code?: unknown; name?: unknown; shortMessage?: unknown; message?: unknown; details?: unknown }[] {
   const list = [];
   for (let e = error, depth = 0; e && typeof e === 'object' && depth < 8; e = (e as { cause?: unknown }).cause, depth++) list.push(e as object);
   return list;
@@ -157,7 +157,9 @@ export function paymentError(error: unknown): string {
   if (chain.some(e => e.name === 'ProviderNotFoundError')) return 'No wallet extension was found in this browser. Install MetaMask, Coinbase Wallet or Rabby, then reload.';
   if (chain.some(e => e.code === -32002)) return 'Your wallet already has a request open. Open the wallet extension to approve or reject it.';
   if (chain.some(e => e.name === 'ChainMismatchError' || e.code === 4902)) return `Switch your wallet to ${NETWORK.label}, then resume.`;
-  if (chain.some(e => e.name === 'InsufficientFundsError')) return `This wallet needs ${NETWORK.label} ETH for gas. Add some, then resume.`;
+  // Wallets report this in different shapes; ethers-based ones only put it in the message.
+  if (chain.some(e => e.name === 'InsufficientFundsError' || e.code === -32003 || [e.message, e.details].some(m => typeof m === 'string' && /insufficient funds/i.test(m))))
+    return `This wallet has no ${NETWORK.label} ETH for gas. ETH on Ethereum Sepolia or another network does not count: bridge or get some from a ${NETWORK.label} faucet, then resume.`;
   if (chain.some(e => e.name === 'WaitForTransactionReceiptTimeoutError' || e.name === 'WaitForCallsStatusTimeoutError')) return 'The transaction has not confirmed yet. Keep this browser open and resume to check it again.';
   if (error instanceof Error && !('shortMessage' in error)) return error.message;
   const short = chain.find(e => typeof e.shortMessage === 'string')?.shortMessage as string | undefined;
