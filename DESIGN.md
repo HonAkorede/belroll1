@@ -2,7 +2,7 @@
 
 ## Overview
 
-Belroll is a private payroll workspace for people testing Beldex payments. The visual idea is a quiet ledger: charcoal surfaces, restrained lavender actions, full payment data and clear transaction states. The desktop workspace has a narrow navigation rail, a single main column and a supporting run summary. Mobile puts wallet connection and the payroll workflow first. The interface is intentionally flat, with no decorative gradients or loading animations.
+Belroll is a private payroll workspace for people testing stealth-address USDC payments on Base. The visual idea is a quiet ledger: charcoal surfaces, restrained lavender actions, full payment data and clear transaction states. The desktop workspace has a narrow navigation rail, a single main column and a supporting run summary. Mobile puts wallet connection and the payroll workflow first. The interface is intentionally flat, with no decorative gradients or loading animations.
 
 The source of truth is `src/styles.css`; product-specific patterns are in `src/App.tsx`, and icons/brand are in `src/icons.tsx`. Receipt rendering uses the same system with a separate print stylesheet.
 

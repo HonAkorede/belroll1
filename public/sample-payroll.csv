@@ -1,4 +1,4 @@
-recipient,amount,note
-alice.bdx,1250,October salary
-sam.bdx,750.50,"Design work, October"
-taylor.bdx,250,Project bonus
+name,stealth_meta_address,amount
+Alice Moreno,st:basesep:0x03850d5ae4985e0c6e603bf6e3bac2f4c575d5d06a90aab7cc89878969ca2470860312bc1bcaeb7193666568b2340f7236af580d352200ec17de857517ea7db7a70b,12.50
+"Sam Okafor, design",st:basesep:0x03a264195cd61e37f86402724d3f150a4421946e4a204102772430dace5bbbaf3703ca4990585f04ea6fef8f8fc05f22ab75c3483563dac931536e835a796f215e65,7.25
+Taylor Kim,st:basesep:0x024b21a548ee5ad0921b17a10159ddc3a0754a1ef533c81eedf588d3b4161acab203ad029cacf26c76378e7f42501526e7fedb0dd1a7b0b580bdf56794a8d925bae3,2.50

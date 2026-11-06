@@ -1,17 +1,19 @@
-import { checkAddress, fromAtomic, toAtomic } from '@bdxi/web3js';
-import { MAX_CSV_BYTES, MAX_ROWS } from './config';
+import { formatUnits, parseUnits } from 'viem';
+import { MAX_CSV_BYTES, MAX_ROWS, USDC_DECIMALS } from './config';
+import { parseMetaAddress } from './stealth';
 
 export interface CsvRow {
   line: number;
-  recipient: string;
+  name: string;
+  metaAddress: string;
   amount: string;
   atomic: string;
-  note: string;
 }
 export interface CsvError { line: number; message: string }
 export interface CsvResult { rows: CsvRow[]; errors: CsvError[] }
-export const isBns = (s: string) => /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?\.bdx$/i.test(s);
-const MAX_ATOMIC = (1n << 64n) - 1n;
+export const HEADER = 'name,stealth_meta_address,amount';
+// One trillion USDC per row is far beyond any payroll and keeps display values bounded.
+const MAX_ATOMIC = 10n ** 18n - 1n;
 
 export function parseCsv(input: string): CsvResult {
   const errors: CsvError[] = [];
@@ -43,29 +45,29 @@ export function parseCsv(input: string): CsvResult {
   finish();
   if (errors.length) return { rows: [], errors };
   const header = records.shift();
-  if (!header || header.fields.map(s => s.trim()).join(',') !== 'recipient,amount,note')
-    return { rows: [], errors: [{ line: header?.line ?? 1, message: 'Use this exact header: recipient,amount,note' }] };
+  if (!header || header.fields.map(s => s.trim()).join(',') !== HEADER)
+    return { rows: [], errors: [{ line: header?.line ?? 1, message: `Use this exact header: ${HEADER}` }] };
   if (!records.length) errors.push({ line: header.line + 1, message: 'Add at least one payment below the header.' });
   if (records.length > MAX_ROWS) errors.push({ line: records[MAX_ROWS].line, message: 'Use at most 500 payments in one CSV.' });
   const rows: CsvRow[] = [];
   for (const record of records.slice(0, MAX_ROWS)) {
     const { fields: f, line: rowLine } = record;
-    if (f.length !== 3) { errors.push({ line: rowLine, message: 'Use three columns: recipient, amount and note. Quote notes containing commas.' }); continue; }
-    const recipient = f[0].trim(), amount = f[1].trim(), note = f[2];
+    if (f.length !== 3) { errors.push({ line: rowLine, message: 'Use three columns: name, stealth_meta_address and amount. Quote names containing commas.' }); continue; }
+    const name = f[0].trim(), metaAddress = f[1].trim(), amount = f[2].trim();
     const before = errors.length;
-    if (!checkAddress(recipient).valid && !isBns(recipient)) errors.push({ line: rowLine, message: 'Enter a BNS name ending in .bdx or a full Beldex address.' });
+    if (!name || name.length > 120) errors.push({ line: rowLine, message: 'Enter a name of 1 to 120 characters.' });
+    if (!parseMetaAddress(metaAddress)) errors.push({ line: rowLine, message: 'Enter a full stealth meta-address starting with st:, such as st:basesep:0x… from the recipient’s Get paid page.' });
     let atomic = 0n;
-    if (!/^\d+(\.\d{1,9})?$/.test(amount)) errors.push({ line: rowLine, message: 'Use a positive decimal amount with up to 9 decimal places, without commas or currency symbols.' });
+    if (!/^\d+(\.\d{1,6})?$/.test(amount)) errors.push({ line: rowLine, message: 'Use a positive USDC amount with up to 6 decimal places, without commas or currency symbols.' });
     else {
-      atomic = toAtomic(amount);
-      if (atomic <= 0n || atomic > MAX_ATOMIC) errors.push({ line: rowLine, message: 'Amount must be greater than zero and at most 18446744073.709551615 BDX.' });
+      atomic = parseUnits(amount, USDC_DECIMALS);
+      if (atomic <= 0n || atomic > MAX_ATOMIC) errors.push({ line: rowLine, message: 'Amount must be greater than zero and below one trillion USDC.' });
     }
-    if (note.length > 2000) errors.push({ line: rowLine, message: 'Keep the note within 2,000 characters.' });
-    if (before === errors.length) rows.push({ line: rowLine, recipient, amount: fromAtomic(atomic), atomic: atomic.toString(), note });
+    if (before === errors.length) rows.push({ line: rowLine, name, metaAddress: metaAddress.toLowerCase(), amount: formatUnits(atomic, USDC_DECIMALS), atomic: atomic.toString() });
   }
   return { rows: errors.length ? [] : rows, errors };
 }
 
 export function totalAmount(rows: Pick<CsvRow, 'atomic'>[]) {
-  return fromAtomic(rows.reduce((total, r) => total + BigInt(r.atomic), 0n));
+  return formatUnits(rows.reduce((total, r) => total + BigInt(r.atomic), 0n), USDC_DECIMALS);
 }

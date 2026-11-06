@@ -1,17 +1,39 @@
-export const APP_NAME = 'Belroll';
-export const NETWORK = 'testnet' as const;
-export const WALLET_INSTALL_URL = 'https://chromewebstore.google.com/detail/beldex-wallet/onhnehjhhionmnbidajneakngpiefapa';
+import { base, baseSepolia } from 'viem/chains';
+import type { Address } from 'viem';
 
-/**
- * TODO(privacy-token): @bdxi/web3js@1.0.1 exports no token-send method or
- * tokenId parameter (SendTransactionParams / BDX_METHODS inspected).
- * Keep this unset until a real SDK API and a requester-owned testnet token ID
- * are supplied. Do not put a token ID into paymentId: that is a different API.
- */
-export const PRIVACY_TOKEN_ID: string | null = null;
-export const SEND_ASSET = 'BDX' as const;
+export const APP_NAME = 'Belroll';
+
+export const NETWORKS = {
+  'base-sepolia': {
+    chain: baseSepolia, label: 'Base Sepolia', shortName: 'basesep', testnet: true,
+    rpcUrl: 'https://sepolia.base.org', explorer: 'https://sepolia.basescan.org',
+    usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as Address,
+  },
+  base: {
+    chain: base, label: 'Base', shortName: 'base', testnet: false,
+    rpcUrl: 'https://mainnet.base.org', explorer: 'https://basescan.org',
+    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address,
+  },
+} as const;
+export type NetworkKey = keyof typeof NETWORKS;
+
+/** Base Sepolia unless the build sets VITE_NETWORK=base. Mainnet is opt-in only. */
+export const NETWORK_KEY: NetworkKey = import.meta.env?.VITE_NETWORK === 'base' ? 'base' : 'base-sepolia';
+export const NETWORK = NETWORKS[NETWORK_KEY];
+export const CHAIN_ID = NETWORK.chain.id;
+
+// Canonical CREATE2 deployments, verified on Base Sepolia and Base (eth_getCode).
+export const ANNOUNCER_ADDRESS: Address = '0x55649E01B5Df198D18D95b5cc5051630cfD45564';
+export const REGISTRY_ADDRESS: Address = '0x6538E6bf4B0eBd30A8Ea093027Ac2422ce5d6538';
+
+export const SEND_ASSET = 'USDC' as const;
+export const USDC_DECIMALS = 6;
 export const MAX_CSV_BYTES = 256 * 1024;
 export const MAX_ROWS = 500;
-// Stay well inside the wallet's documented approximately 24-hour recovery TTL.
+// Unknown outcomes are searched on-chain from the block recorded before the attempt.
+// Past this window, reconcile manually instead of trusting a long log search.
 export const RECOVERY_WINDOW_MS = 12 * 60 * 60 * 1000;
-export const JOURNAL_KEY = 'belroll.journal.v1';
+// sepolia.base.org rejects eth_getLogs spans over 200 blocks (error -32614).
+export const LOG_CHUNK_BLOCKS = 200n;
+export const JOURNAL_KEY = 'belroll.journal.v2';
+export const RECEIPT_TIMEOUT_MS = 120_000;

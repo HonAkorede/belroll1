@@ -5,9 +5,20 @@ Copyright (c) Meta Platforms, Inc. and affiliates.
 MIT license: ./licenses/react-LICENSE.txt
 https://github.com/facebook/react
 
-@bdxi/web3js 1.0.1
-MIT license: ./licenses/beldex-sdk-MIT.txt
-https://github.com/Beldex-Coin/bdx-web3js
+viem 2.57.16, wagmi 2.19.5 (with @wagmi/core and @wagmi/connectors), ox and abitype
+Copyright (c) weth, LLC and contributors
+MIT licenses: ./licenses/viem-LICENSE.txt, ./licenses/wagmi-LICENSE.txt,
+./licenses/ox-LICENSE.txt, ./licenses/abitype-LICENSE.txt
+https://github.com/wevm
+
+@tanstack/react-query 5.107.0
+MIT license: ./licenses/tanstack-query-LICENSE.txt
+https://github.com/TanStack/query
+
+@noble/curves 1.9.1 and @noble/hashes
+Copyright (c) Paul Miller
+MIT license: ./licenses/noble-curves-LICENSE.txt, ./licenses/noble-hashes-LICENSE.txt
+https://github.com/paulmillr/noble-curves
 
 Manrope variable font, packaged by @fontsource-variable/manrope 5.3.0
 Copyright 2019 The Manrope Project Authors
@@ -15,4 +26,5 @@ SIL Open Font License 1.1: ./licenses/manrope-LICENSE.txt
 https://github.com/sharanda/manrope
 
 The Belroll mark, interface icons and share graphic are authored SVGs in this
-repository. No external asset requests or hosted fonts are required.
+repository. No external asset requests or hosted fonts are required. The only network
+requests go to the configured Base RPC endpoint and the user's wallet.

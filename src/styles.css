@@ -211,9 +211,8 @@ h1 { font-size: var(--text-title); line-height: 1.3; letter-spacing: -.9px; }
 .status { display: inline-flex; align-items: center; gap: 5px; color: var(--color-secondary); line-height: 1.5; }
 .status-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .status-sent { color: var(--color-success); }
-.status-pending, .status-unresolved { color: var(--color-warning); }
-.status-failed, .status-resolution-failed { color: var(--color-danger); }
-.status-approved { color: var(--color-success); }
+.status-pending, .status-unresolved, .status-transferred { color: var(--color-warning); }
+.status-failed { color: var(--color-danger); }
 .status-hint { display: block; color: var(--color-muted); margin-block-start: 5px; }
 .tx-label { display: block; margin-block-start: 12px; color: var(--color-muted); }
 .tx-hash { display: block; font-size: var(--text-xs); word-break: break-all; color: var(--color-secondary); margin-block-start: 3px; }
@@ -249,6 +248,19 @@ h1 { font-size: var(--text-title); line-height: 1.3; letter-spacing: -.9px; }
 .receipt-actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
 .copy-status { text-align: center; color: var(--color-secondary); font-size: var(--text-xs); margin-block-start: 12px; min-height: 20px; }
 .receipt-footer { color: var(--color-muted); display: flex; justify-content: center; align-items: center; gap: 7px; font-size: var(--text-xs); margin-block-start: 32px; }
+/* Base port: wallet choices, privacy banner and the Get paid page. */
+.wallet-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.privacy-banner { margin-block: -8px 24px; }
+.privacy-banner strong { color: var(--color-text); }
+.mobile-get-paid { display: none; color: var(--color-secondary); font-size: var(--text-xs); min-height: 44px; align-items: center; }
+.note-cell a.full-address, .tx-hash { color: var(--color-secondary); }
+.get-paid .page-heading { margin-block: 18px 24px; }
+.get-paid .upload-panel { margin-block-end: 20px; }
+.get-paid-body { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 0 24px 22px; }
+.get-paid-body .notice { margin: 0; }
+.meta-address { width: 100%; padding: 14px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-bg); font-size: var(--text-sm); }
+.get-paid-notes { padding-inline: 0; }
+
 @media (prefers-reduced-motion: no-preference) {
   .button { transition: background-color 120ms, border-color 120ms, transform 120ms; }
   .button:active:not(:disabled) { transform: scale(.96); }
@@ -285,6 +297,10 @@ h1 { font-size: var(--text-title); line-height: 1.3; letter-spacing: -.9px; }
   .privacy-note { padding-block-start: 16px; margin-block-start: 16px; }
 }
 @media (max-width: 720px) {
+  .mobile-get-paid { display: inline-flex; }
+  .wallet-actions { width: 100%; }
+  .wallet-actions .button { width: 100%; }
+  .get-paid-body { padding: 0 18px 18px; }
   .sidebar { display: none; }
   .topbar { height: 72px; padding-inline: 24px; }
   .mobile-brand { display: block; }

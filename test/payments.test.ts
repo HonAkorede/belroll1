@@ -1,149 +1,230 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BeldexWeb3, BdxRpcError, type BeldexProvider, type BdxEvent, type BdxMethod } from '@bdxi/web3js';
+import { privateKeyToAddress } from 'viem/accounts';
+import type { Address, Hex } from 'viem';
 import { parseCsv } from '../src/csv';
-import { createPaymentSender, PaymentJournal, preparePayments, sendSequentially, type JournalStorage, type PaymentRow, type SendOptions } from '../src/payments';
-import { JOURNAL_KEY, RECOVERY_WINDOW_MS } from '../src/config';
+import { createPaymentSender, PaymentJournal, preparePayments, sendSequentially, type ChainClient, type JournalStorage, type PaymentRow } from '../src/payments';
+import { CHAIN_ID, JOURNAL_KEY, NETWORK, RECOVERY_WINDOW_MS } from '../src/config';
+import { generateKeys, stealthPrivateKey, type StealthPayment } from '../src/stealth';
 
-const owner = 'bx' + 'B'.repeat(95), destination = 'bx' + 'A'.repeat(95);
-const options: SendOptions = { token: 'BDX', priority: 1, flash: false };
+const owner: Address = '0x00000000000000000000000000000000000000aa';
+const keys = [generateKeys('basesep'), generateKeys('basesep'), generateKeys('basesep')];
+const csv = `name,stealth_meta_address,amount\nAda,${keys[0].metaAddress},0.1\n"Sam, design",${keys[1].metaAddress},0.2\nTaylor,${keys[2].metaAddress},0.3`;
+const rejection = Object.assign(new Error('User rejected the request.'), { code: 4001 });
+const timeout = Object.assign(new Error('Timed out'), { name: 'WaitForTransactionReceiptTimeoutError', shortMessage: 'Timed out' });
+
 class MemoryStorage implements JournalStorage {
   data = new Map<string, string>();
   getItem(k: string) { return this.data.get(k) ?? null; }
   setItem(k: string, v: string) { this.data.set(k, v); }
 }
-class FakeProvider implements BeldexProvider {
-  readonly isBeldex = true;
-  nettype = 'testnet'; address = owner; resolveAddress = destination;
-  capability = true; sends: Record<string, unknown>[] = []; active = 0; maxActive = 0;
-  responses: (Error | 'unknown' | 'success')[] = [];
-  outcomes = new Map<string, { txHash: string; fee: string; operationId: string }>();
-  on(_event: BdxEvent, _listener: (data: unknown) => void) {}
-  off(_event: BdxEvent, _listener: (data: unknown) => void) {}
-  async request({ method, params }: { method: BdxMethod; params?: object }): Promise<unknown> {
-    if (method === 'bdx_getNetwork') return { nettype: this.nettype, protocolVersion: 1, walletVersion: '1.2.0', height: 1 };
-    if (method === 'bdx_getAddress') return { address: this.address };
-    if (method === 'bdx_resolveBns') return { name: 'name.bdx', address: this.resolveAddress, verified: false };
-    if (method === 'bdx_getOperationStatus') { if (!this.capability) throw new BdxRpcError(-32601, 'not supported'); return { status: 'unknown' }; }
-    if (method === 'bdx_sendTransaction') {
-      const p = params as Record<string, unknown>; this.sends.push(p);
-      const prior = this.outcomes.get(p.idempotencyKey as string);
-      if (prior) return { ...prior, idempotent: true };
-      this.active++; this.maxActive = Math.max(this.maxActive, this.active);
-      await new Promise(r => setTimeout(r, 2));
-      this.active--;
-      const response = this.responses.shift() ?? 'success';
-      if (response instanceof Error) throw response;
-      const result = { txHash: (this.outcomes.size + 1).toString(16).padStart(64, '0'), fee: '1000', operationId: 'operation-' + this.sends.length };
-      this.outcomes.set(p.idempotencyKey as string, result);
-      // Simulate broadcast succeeding while the page times out.
-      if (response === 'unknown') throw new BdxRpcError(4998, 'unknown outcome');
-      return result;
-    }
-    throw new Error(`Unexpected method ${method}`);
+type Response = Error | 'success' | 'revert' | 'unknown' | 'timeout';
+class FakeChain implements ChainClient {
+  chainId: number = CHAIN_ID; account: Address = owner; block = 100n; balance = 10n ** 12n; batch = false;
+  requests: string[] = []; active = 0; maxActive = 0;
+  transfers: { to: Address; amount: bigint; hash: Hex; ok: boolean }[] = [];
+  announcements: { payment: StealthPayment; metadata: Hex; hash: Hex }[] = [];
+  transferResponses: Response[] = []; announceResponses: Response[] = [];
+  receipts = new Map<Hex, boolean | 'timeout'>();
+  private nextHash() { return `0x${(this.requests.length + 1).toString(16).padStart(64, '0')}` as Hex; }
+  private async respond(responses: Response[], record: (hash: Hex, ok: boolean) => void) {
+    this.active++; this.maxActive = Math.max(this.maxActive, this.active);
+    await new Promise(r => setTimeout(r, 1));
+    this.active--;
+    const response = responses.shift() ?? 'success', hash = this.nextHash();
+    if (response instanceof Error) throw response;
+    record(hash, response !== 'revert');
+    this.receipts.set(hash, response === 'timeout' ? 'timeout' : response !== 'revert');
+    // Broadcast succeeded, but the page never learned the hash.
+    if (response === 'unknown') throw new Error('connection lost');
+    return hash;
+  }
+  async getChainId() { return this.chainId; }
+  async getAccount() { return this.account; }
+  async getBlockNumber() { return this.block++; }
+  async usdcBalance() { return this.balance; }
+  async supportsBatch() { return this.batch; }
+  async sendTransfer(to: Address, amount: bigint) {
+    this.requests.push('transfer');
+    return this.respond(this.transferResponses, (hash, ok) => this.transfers.push({ to, amount, hash, ok }));
+  }
+  async sendAnnounce(payment: StealthPayment, metadata: Hex) {
+    this.requests.push('announce');
+    return this.respond(this.announceResponses, (hash, ok) => { if (ok) this.announcements.push({ payment, metadata, hash }); });
+  }
+  async sendBatch(to: Address, amount: bigint, payment: StealthPayment, metadata: Hex) {
+    this.requests.push('batch');
+    const hash = await this.respond(this.transferResponses, (h, ok) => { this.transfers.push({ to, amount, hash: h, ok }); if (ok) this.announcements.push({ payment, metadata, hash: h }); });
+    return { hash, ok: this.receipts.get(hash) === true };
+  }
+  async confirm(hash: Hex) {
+    const receipt = this.receipts.get(hash);
+    if (receipt === undefined || receipt === 'timeout') throw timeout;
+    return receipt;
+  }
+  async findTransfer(from: Address, to: Address, amount: bigint) {
+    assert.equal(from, owner);
+    return this.transfers.find(t => t.ok && t.to === to && t.amount === amount && this.receipts.get(t.hash) === true)?.hash ?? null;
+  }
+  async findAnnouncement(stealthAddress: Address) {
+    return this.announcements.find(a => a.payment.stealthAddress === stealthAddress)?.hash ?? null;
   }
 }
-async function setup(sendOptions = options) {
-  const provider = new FakeProvider(); const bdx = new BeldexWeb3(provider);
-  const storage = new MemoryStorage(), journal = new PaymentJournal(storage);
-  const rows = parseCsv('recipient,amount,note\na.bdx,0.1,Salary\nb.bdx,0.2,Bonus\nc.bdx,0.3,Expenses').rows;
-  const args = { bdx, owner, reference: 'October payroll', rows, options: sendOptions, journal };
+
+async function setup(storage = new MemoryStorage()) {
+  const chain = new FakeChain();
+  const journal = new PaymentJournal(storage);
+  const rows = parseCsv(csv).rows;
+  const args = { chain, owner, reference: 'October payroll', rows, journal };
   const prepared = await preparePayments(args);
   journal.bindRun(prepared.runKey, prepared.fingerprint);
   const updates: PaymentRow[] = [];
-  const sender = createPaymentSender({ bdx, owner, options: sendOptions, journal, onUpdate: r => updates.push(r) });
-  return { ...args, provider, storage, prepared, updates, sender };
+  const sender = createPaymentSender({ chain, owner, journal, onUpdate: r => updates.push(r) });
+  return { ...args, storage, prepared, updates, sender };
 }
 
-test('sends exact atomic units sequentially, only to reviewed full addresses, with unique stable keys', async () => {
+test('sends exact USDC units to a fresh one-time address per row, then announces each', async () => {
   const s = await setup();
-  assert.equal(s.provider.sends.length, 0, 'review must not send');
+  assert.equal(s.chain.requests.length, 0, 'review must not send');
   const results = await sendSequentially(s.prepared.rows, s.sender);
-  assert.equal(results.filter(r => r.status === 'sent').length, 3);
-  assert.equal(s.provider.maxActive, 1);
-  assert.deepEqual(s.provider.sends.map(p => p.amount), ['100000000', '200000000', '300000000']);
-  assert.ok(s.provider.sends.every(p => p.to === destination && p.priority === 1 && !('note' in p) && !('tokenId' in p)));
-  assert.equal(new Set(s.provider.sends.map(p => p.idempotencyKey)).size, 3);
-  assert.deepEqual(s.updates.slice(0, 3).map(r => r.status), ['pending', 'approved', 'sent']);
+  assert.deepEqual(results.map(r => r.status), ['sent', 'sent', 'sent']);
+  assert.deepEqual(s.chain.requests, ['transfer', 'announce', 'transfer', 'announce', 'transfer', 'announce']);
+  assert.equal(s.chain.maxActive, 1);
+  assert.deepEqual(s.chain.transfers.map(t => t.amount), [100000n, 200000n, 300000n]);
+  assert.equal(new Set(s.chain.transfers.map(t => t.to)).size, 3);
+  s.chain.transfers.forEach((t, i) => {
+    assert.equal(t.to, s.prepared.rows[i].stealthAddress);
+    // Only the intended recipient can derive the key for their address.
+    assert.equal(privateKeyToAddress(stealthPrivateKey(keys[i], s.chain.announcements[i].payment.ephemeralPublicKey)), t.to);
+    assert.ok(s.chain.announcements[i].metadata.startsWith(s.prepared.rows[i].viewTag + 'a9059cbb' + NETWORK.usdc.slice(2).toLowerCase()));
+  });
+  assert.deepEqual(s.updates.slice(0, 3).map(r => r.status), ['pending', 'transferred', 'sent']);
+  assert.ok(results.every(r => r.transferTx && r.announceTx && r.sentAt));
 });
-test('stops on rejection and resumes without resending an already sent row', async () => {
+
+test('uses one atomic batch per row when the wallet supports it', async () => {
+  const s = await setup(); s.chain.batch = true;
+  const results = await sendSequentially(s.prepared.rows, s.sender);
+  assert.deepEqual(results.map(r => r.status), ['sent', 'sent', 'sent']);
+  assert.deepEqual(s.chain.requests, ['batch', 'batch', 'batch']);
+});
+
+test('stops on rejection and resumes to the same address without resending a sent row', async () => {
   const s = await setup();
-  s.provider.responses = ['success', new BdxRpcError(4001, 'declined')];
+  s.chain.transferResponses = ['success', rejection];
   const first = await sendSequentially(s.prepared.rows, s.sender);
   assert.deepEqual(first.map(r => r.status), ['sent', 'failed']);
-  assert.equal(s.provider.sends.length, 2);
   const resumed = await preparePayments(s);
+  assert.equal(resumed.rows[1].stealthAddress, s.prepared.rows[1].stealthAddress);
   await sendSequentially(resumed.rows, s.sender);
-  assert.equal(s.provider.sends.length, 4);
-  assert.equal(s.provider.outcomes.size, 3);
-  assert.equal(s.provider.sends[1].idempotencyKey, s.provider.sends[2].idempotencyKey);
+  assert.equal(s.chain.transfers.length, 3);
+  assert.deepEqual(s.chain.transfers.map(t => t.to), resumed.rows.map(r => r.stealthAddress));
+  assert.deepEqual(resumed.rows.slice(0, 2).map(r => r.stealthAddress), s.prepared.rows.slice(0, 2).map(r => r.stealthAddress));
 });
-test('recovers an unknown broadcast with the same key and no second payment', async () => {
-  const s = await setup(); s.provider.responses = ['unknown'];
+
+test('recovers a broadcast whose outcome was lost by finding it on-chain, with no second transfer', async () => {
+  const s = await setup(); s.chain.transferResponses = ['unknown'];
   const first = await sendSequentially(s.prepared.rows, s.sender);
   assert.equal(first[0].status, 'unresolved');
-  assert.equal(s.provider.outcomes.size, 1);
-  const second = await sendSequentially(s.prepared.rows, s.sender);
+  const second = await sendSequentially((await preparePayments(s)).rows, s.sender);
   assert.equal(second.filter(r => r.status === 'sent').length, 3);
-  assert.equal(s.provider.outcomes.size, 3);
-  assert.equal(s.provider.sends[0].idempotencyKey, s.provider.sends[1].idempotencyKey);
+  assert.equal(s.chain.transfers.length, 3);
 });
-test('re-uploading the same CSV after a reload recovers all sent rows from local journal', async () => {
+
+test('an unknown outcome with nothing on-chain blocks resending until the user releases it', async () => {
+  const s = await setup(); s.chain.transferResponses = [new Error('wallet crashed')];
+  await s.sender(s.prepared.rows[0]);
+  const blocked = await s.sender((await preparePayments(s)).rows[0]);
+  assert.equal(blocked.status, 'unresolved');
+  assert.match(blocked.error!, /Not sent, retry/);
+  assert.equal(s.chain.requests.filter(r => r === 'transfer').length, 1);
+  s.journal.release(s.prepared.rows[0].key);
+  const retried = await s.sender((await preparePayments(s)).rows[0]);
+  assert.equal(retried.status, 'sent');
+  assert.equal(s.chain.transfers[0].to, s.prepared.rows[0].stealthAddress);
+});
+
+test('a confirmation timeout keeps the hash and resume confirms it instead of resending', async () => {
+  const s = await setup(); s.chain.transferResponses = ['timeout'];
+  const first = await s.sender(s.prepared.rows[0]);
+  assert.equal(first.status, 'unresolved');
+  s.chain.receipts.set(s.chain.transfers[0].hash, true);
+  const second = await s.sender((await preparePayments(s)).rows[0]);
+  assert.equal(second.status, 'sent');
+  assert.equal(s.chain.transfers.length, 1);
+});
+
+test('a reverted transfer is marked failed and can be retried safely', async () => {
+  const s = await setup(); s.chain.transferResponses = ['revert'];
+  assert.equal((await s.sender(s.prepared.rows[0])).status, 'failed');
+  assert.equal((await s.sender((await preparePayments(s)).rows[0])).status, 'sent');
+  assert.equal(s.chain.transfers.filter(t => t.ok).length, 1);
+});
+
+test('a declined announcement leaves the row transferred; resume only announces', async () => {
+  const s = await setup(); s.chain.announceResponses = [rejection];
+  const first = await sendSequentially(s.prepared.rows, s.sender);
+  assert.equal(first[0].status, 'transferred');
+  assert.match(first[0].error!, /USDC has arrived/);
+  const resumed = await preparePayments(s);
+  assert.equal(resumed.rows[0].status, 'transferred');
+  await sendSequentially(resumed.rows, s.sender);
+  assert.equal(s.chain.transfers.length, 3);
+  assert.equal(s.chain.announcements.length, 3);
+});
+
+test('re-uploading the same CSV after a reload recovers sent rows; the journal holds no names or meta-addresses', async () => {
   const s = await setup(); await sendSequentially(s.prepared.rows, s.sender);
-  const journal = new PaymentJournal(s.storage);
-  const recovered = await preparePayments({ ...s, journal });
-  assert.ok(recovered.rows.every(r => r.status === 'sent' && r.txHash && r.sentAt));
+  const recovered = await preparePayments({ ...s, journal: new PaymentJournal(s.storage) });
+  assert.ok(recovered.rows.every(r => r.status === 'sent' && r.transferTx && r.sentAt));
   await sendSequentially(recovered.rows, s.sender);
-  assert.equal(s.provider.sends.length, 3);
-  assert.ok(!s.storage.getItem(JOURNAL_KEY)!.includes('Salary'), 'notes are not persisted');
-  assert.ok(!s.storage.getItem(JOURNAL_KEY)!.includes(destination), 'addresses are not persisted');
+  assert.equal(s.chain.requests.length, 6);
+  const raw = s.storage.getItem(JOURNAL_KEY)!;
+  assert.ok(!raw.includes('Ada') && !raw.includes(keys[0].metaAddress.slice(10, 40)));
 });
-test('blocks mainnet and changed accounts before any send', async () => {
+
+test('blocks the wrong network and a changed account before any send', async () => {
   for (const changed of ['network', 'account']) {
     const s = await setup();
-    if (changed === 'network') s.provider.nettype = 'mainnet'; else s.provider.address = destination;
+    if (changed === 'network') s.chain.chainId = 1; else s.chain.account = '0x00000000000000000000000000000000000000bb';
     await assert.rejects(s.sender(s.prepared.rows[0]));
-    assert.equal(s.provider.sends.length, 0);
+    assert.equal(s.chain.requests.length, 0);
   }
 });
-test('blocks an unsupported wallet, unavailable journal and corrupted journal without sending', async () => {
-  const s = await setup(); s.provider.capability = false;
-  await assert.rejects(s.sender(s.prepared.rows[0]), /recovery/);
-  assert.equal(s.provider.sends.length, 0);
+
+test('blocks an unavailable or corrupted journal without sending', async () => {
+  const s = await setup();
   const denied = new PaymentJournal({ getItem: () => null, setItem: () => { throw new Error('denied'); } });
   const sender = createPaymentSender({ ...s, journal: denied, onUpdate: () => {} });
-  s.provider.capability = true;
-  await assert.rejects(sender(s.prepared.rows[0]), /could not be saved/);
-  assert.equal(s.provider.sends.length, 0);
+  const result = await sender(s.prepared.rows[0]);
+  assert.match(result.error!, /could not be saved/);
+  assert.equal(s.chain.requests.length, 0);
   s.storage.setItem(JOURNAL_KEY, '{broken');
   await assert.rejects(preparePayments(s), /cannot be read/);
 });
-test('blocks changed CSV, settings and re-resolved addresses for the same pay run', async () => {
+
+test('blocks a changed CSV, amount or recipient for the same pay run', async () => {
   const s = await setup();
-  await assert.rejects(preparePayments({ ...s, rows: [{ ...s.rows[0], atomic: '999' }] }), /different CSV/);
-  await assert.rejects(preparePayments({ ...s, options: { ...options, flash: true } }), /different CSV/);
-  await s.sender(s.prepared.rows[0]); s.provider.resolveAddress = 'bx' + 'C'.repeat(95);
-  await assert.rejects(preparePayments(s), /changed after an attempt/);
+  await assert.rejects(preparePayments({ ...s, rows: [{ ...s.rows[0], atomic: '999' }, ...s.rows.slice(1)] }), /different CSV/);
+  await assert.rejects(preparePayments({ ...s, rows: parseCsv(csv.replace(keys[0].metaAddress, keys[2].metaAddress)).rows }), /different CSV/);
 });
-test('blocks an unresolved retry after the conservative recovery window', async () => {
-  const s = await setup(); s.provider.responses = ['unknown'];
+
+test('blocks automatic recovery after the conservative window', async () => {
+  const s = await setup(); s.chain.transferResponses = [new Error('wallet crashed')];
   await s.sender(s.prepared.rows[0]);
   const sender = createPaymentSender({ ...s, onUpdate: () => {}, now: () => Date.now() + RECOVERY_WINDOW_MS + 1000 });
   await assert.rejects(sender(s.prepared.rows[0]), /recovery has expired/);
-  assert.equal(s.provider.sends.length, 1);
+  assert.equal(s.chain.requests.length, 1);
 });
-test('uses SDK priority 5 for Flash and exposes no invented flash or token parameters', async () => {
-  const s = await setup({ ...options, flash: true }); await s.sender(s.prepared.rows[0]);
-  assert.equal(s.provider.sends[0].priority, 5);
-  assert.equal('flash' in s.provider.sends[0], false);
-  assert.equal('tokenId' in s.provider.sends[0], false);
-});
+
 test('pauses between rows and keeps remaining payments untouched', async () => {
   const s = await setup(); let sent = false;
   await sendSequentially(s.prepared.rows, async r => { const result = await s.sender(r); sent = true; return result; }, () => sent);
-  assert.equal(s.provider.sends.length, 1);
+  assert.equal(s.chain.transfers.length, 1);
 });
-test('a deliberate new pay run reference gets separate payment keys', async () => {
+
+test('a deliberate new pay run reference gets separate keys and fresh one-time addresses', async () => {
   const s = await setup(); const next = await preparePayments({ ...s, reference: 'November payroll' });
-  assert.notEqual(next.rows[0].idempotencyKey, s.prepared.rows[0].idempotencyKey);
+  assert.notEqual(next.rows[0].key, s.prepared.rows[0].key);
+  assert.notEqual(next.rows[0].stealthAddress, s.prepared.rows[0].stealthAddress);
 });
