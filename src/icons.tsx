@@ -22,5 +22,5 @@ export function Icon({ name, size = 18, className = '' }: { name: IconName; size
   return <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 export function Logo() {
-  return <a className="brand" href="#/" aria-label="Belroll home"><svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true"><rect width="40" height="40" rx="11" fill="currentColor"/><path d="M13 9v17a7 7 0 1 0 7-7h-7m7-6h7" fill="none" stroke="#24202e" strokeWidth="4" strokeLinecap="round"/></svg><span>belroll<span className="brand-dot">.</span></span></a>;
+  return <a className="brand" href="#/" aria-label="Nightroll home"><svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true"><rect width="40" height="40" rx="11" fill="currentColor"/><path d="M13 29V18a7 7 0 0 1 14 0v11M29.5 10.5h.01" fill="none" stroke="#24202e" strokeWidth="4" strokeLinecap="round"/></svg><span>nightroll<span className="brand-dot">.</span></span></a>;
 }

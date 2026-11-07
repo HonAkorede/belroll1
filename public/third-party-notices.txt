@@ -1,4 +1,4 @@
-Belroll bundles the following runtime dependencies locally:
+Nightroll bundles the following runtime dependencies locally:
 
 React and React DOM 19.2.0
 Copyright (c) Meta Platforms, Inc. and affiliates.
@@ -25,6 +25,6 @@ Copyright 2019 The Manrope Project Authors
 SIL Open Font License 1.1: ./licenses/manrope-LICENSE.txt
 https://github.com/sharanda/manrope
 
-The Belroll mark, interface icons and share graphic are authored SVGs in this
+The Nightroll mark, interface icons and share graphic are authored SVGs in this
 repository. No external asset requests or hosted fonts are required. The only network
 requests go to the configured Base RPC endpoint and the user's wallet.

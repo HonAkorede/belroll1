@@ -1,14 +1,14 @@
 import { createConfig, http, type Config } from 'wagmi';
 import { injected } from 'wagmi/connectors';
-import { getAccount, getBlockNumber, getCapabilities, getPublicClient, readContract, sendCalls, waitForCallsStatus, waitForTransactionReceipt, writeContract } from 'wagmi/actions';
+import { getAccount, getBalance, getBlockNumber, getCapabilities, getPublicClient, readContract, sendCalls, sendTransaction, waitForCallsStatus, waitForTransactionReceipt, writeContract } from 'wagmi/actions';
 import { encodeFunctionData, erc20Abi, parseAbi, parseAbiItem, type Address, type Chain, type Hex } from 'viem';
 import { ANNOUNCER_ADDRESS, CHAIN_ID, LOG_CHUNK_BLOCKS, NETWORK, RECEIPT_TIMEOUT_MS } from './config';
 import type { ChainClient } from './payments';
 import { SCHEME_ID, type StealthPayment } from './stealth';
 
+export const announcementEvent = parseAbiItem('event Announcement(uint256 indexed schemeId, address indexed stealthAddress, address indexed caller, bytes ephemeralPubKey, bytes metadata)');
 export const announcerAbi = parseAbi(['function announce(uint256 schemeId, address stealthAddress, bytes ephemeralPubKey, bytes metadata)']);
 const transferEvent = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
-const announcementEvent = parseAbiItem('event Announcement(uint256 indexed schemeId, address indexed stealthAddress, address indexed caller, bytes ephemeralPubKey, bytes metadata)');
 
 // Injected wallets only; EIP-6963 discovery lists each installed wallet separately.
 export const wagmiConfig = createConfig({
@@ -39,6 +39,7 @@ export function createChainClient(config: Config = wagmiConfig): ChainClient {
     async getAccount() { return account(); },
     getBlockNumber: () => getBlockNumber(config, { chainId: CHAIN_ID }),
     usdcBalance: owner => readContract(config, { chainId: CHAIN_ID, address: NETWORK.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [owner] }),
+    ethBalance: async owner => (await getBalance(config, { chainId: CHAIN_ID, address: owner })).value,
     async supportsBatch() {
       try {
         const capabilities = await getCapabilities(config, { account: account(), chainId: CHAIN_ID });
@@ -48,12 +49,14 @@ export function createChainClient(config: Config = wagmiConfig): ChainClient {
     },
     sendTransfer: (to, amount) => writeContract(config, { chainId: CHAIN_ID, address: NETWORK.usdc, abi: erc20Abi, functionName: 'transfer', args: [to, amount] }),
     sendAnnounce: (payment, metadata) => writeContract(config, { chainId: CHAIN_ID, ...announceCall(payment, metadata) }),
-    async sendBatch(to, amount, payment, metadata) {
+    sendEth: (to, value) => sendTransaction(config, { chainId: CHAIN_ID, to, value }),
+    async sendBatch(to, amount, payment, metadata, topUp) {
       const { id } = await sendCalls(config, {
         chainId: CHAIN_ID, forceAtomic: true,
         calls: [
-          { to: NETWORK.usdc, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [to, amount] }) },
-          { to: ANNOUNCER_ADDRESS, data: encodeFunctionData(announceCall(payment, metadata)) },
+          { to: NETWORK.usdc, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [to, amount] }) },
+          { to: ANNOUNCER_ADDRESS, value: 0n, data: encodeFunctionData(announceCall(payment, metadata)) },
+          ...(topUp ? [{ to, value: topUp, data: '0x' as Hex }] : []),
         ],
       });
       const result = await waitForCallsStatus(config, { id, timeout: RECEIPT_TIMEOUT_MS });

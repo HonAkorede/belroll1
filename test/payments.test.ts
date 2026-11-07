@@ -24,7 +24,8 @@ class FakeChain implements ChainClient {
   requests: string[] = []; active = 0; maxActive = 0;
   transfers: { to: Address; amount: bigint; hash: Hex; ok: boolean }[] = [];
   announcements: { payment: StealthPayment; metadata: Hex; hash: Hex }[] = [];
-  transferResponses: Response[] = []; announceResponses: Response[] = [];
+  transferResponses: Response[] = []; announceResponses: Response[] = []; ethResponses: Response[] = [];
+  eth = new Map<Address, bigint>();
   receipts = new Map<Hex, boolean | 'timeout'>();
   private nextHash() { return `0x${(this.requests.length + 1).toString(16).padStart(64, '0')}` as Hex; }
   private async respond(responses: Response[], record: (hash: Hex, ok: boolean) => void) {
@@ -43,6 +44,7 @@ class FakeChain implements ChainClient {
   async getAccount() { return this.account; }
   async getBlockNumber() { return this.block++; }
   async usdcBalance() { return this.balance; }
+  async ethBalance(owner: Address) { return this.eth.get(owner) ?? (owner === this.account ? 10n ** 18n : 0n); }
   async supportsBatch() { return this.batch; }
   async sendTransfer(to: Address, amount: bigint) {
     this.requests.push('transfer');
@@ -52,9 +54,16 @@ class FakeChain implements ChainClient {
     this.requests.push('announce');
     return this.respond(this.announceResponses, (hash, ok) => { if (ok) this.announcements.push({ payment, metadata, hash }); });
   }
-  async sendBatch(to: Address, amount: bigint, payment: StealthPayment, metadata: Hex) {
-    this.requests.push('batch');
-    const hash = await this.respond(this.transferResponses, (h, ok) => { this.transfers.push({ to, amount, hash: h, ok }); if (ok) this.announcements.push({ payment, metadata, hash: h }); });
+  async sendEth(to: Address, value: bigint) {
+    this.requests.push('eth');
+    return this.respond(this.ethResponses, (_hash, ok) => { if (ok) this.eth.set(to, (this.eth.get(to) ?? 0n) + value); });
+  }
+  async sendBatch(to: Address, amount: bigint, payment: StealthPayment, metadata: Hex, topUp: bigint) {
+    this.requests.push(topUp ? 'batch+eth' : 'batch');
+    const hash = await this.respond(this.transferResponses, (h, ok) => {
+      this.transfers.push({ to, amount, hash: h, ok });
+      if (ok) { this.announcements.push({ payment, metadata, hash: h }); if (topUp) this.eth.set(to, topUp); }
+    });
     return { hash, ok: this.receipts.get(hash) === true };
   }
   async confirm(hash: Hex) {
@@ -71,11 +80,11 @@ class FakeChain implements ChainClient {
   }
 }
 
-async function setup(storage = new MemoryStorage()) {
+async function setup(storage = new MemoryStorage(), topUp = 0n) {
   const chain = new FakeChain();
   const journal = new PaymentJournal(storage);
   const rows = parseCsv(csv).rows;
-  const args = { chain, owner, reference: 'October payroll', rows, journal };
+  const args = { chain, owner, reference: 'October payroll', rows, journal, topUp };
   const prepared = await preparePayments(args);
   journal.bindRun(prepared.runKey, prepared.fingerprint);
   const updates: PaymentRow[] = [];
@@ -233,4 +242,49 @@ test('explains missing gas however the wallet words it', () => {
   const ethers = new Error('insufficient funds for intrinsic transaction cost (info={ "error": { "code": -32003 } }, code=INSUFFICIENT_FUNDS)');
   for (const error of [ethers, { code: -32003, message: 'insufficient funds for gas * price + value' }, Object.assign(new Error('wrapped', { cause: ethers }), { shortMessage: 'x' })])
     assert.match(paymentError(error), /no Base Sepolia ETH for gas/);
+});
+
+const gas = 20_000_000_000_000n; // 0.00002 ETH
+
+test('a gas top-up sends ETH to each one-time address after its announcement', async () => {
+  const s = await setup(undefined, gas);
+  const results = await sendSequentially(s.prepared.rows, s.sender);
+  assert.deepEqual(results.map(r => r.status), ['sent', 'sent', 'sent']);
+  assert.deepEqual(s.chain.requests.slice(0, 3), ['transfer', 'announce', 'eth']);
+  for (const row of s.prepared.rows) assert.equal(await s.chain.ethBalance(row.stealthAddress), gas);
+  assert.ok(results.every(r => r.topUpTx));
+  assert.deepEqual(s.updates.slice(0, 4).map(r => r.status), ['pending', 'transferred', 'announced', 'sent']);
+});
+
+test('a batch-capable wallet sends transfer, announcement and top-up in one approval', async () => {
+  const s = await setup(undefined, gas); s.chain.batch = true;
+  await sendSequentially(s.prepared.rows, s.sender);
+  assert.deepEqual(s.chain.requests, ['batch+eth', 'batch+eth', 'batch+eth']);
+});
+
+test('a declined top-up leaves the row announced; resume sends only the ETH', async () => {
+  const s = await setup(undefined, gas); s.chain.ethResponses = [rejection];
+  const first = await sendSequentially(s.prepared.rows, s.sender);
+  assert.equal(first[0].status, 'announced');
+  assert.match(first[0].error!, /gas top-up was not sent/);
+  assert.equal((await preparePayments(s)).rows[0].status, 'announced');
+  await sendSequentially((await preparePayments(s)).rows, s.sender);
+  assert.equal(s.chain.transfers.length, 3);
+  assert.equal(s.chain.announcements.length, 3);
+  assert.equal(s.chain.requests.filter(r => r === 'eth').length, 4);
+});
+
+test('a top-up whose outcome was lost is detected by the address balance, not resent', async () => {
+  const s = await setup(undefined, gas); s.chain.ethResponses = ['unknown'];
+  assert.equal((await s.sender(s.prepared.rows[0])).status, 'announced');
+  const second = await s.sender((await preparePayments(s)).rows[0]);
+  assert.equal(second.status, 'sent');
+  assert.equal(s.chain.requests.filter(r => r === 'eth').length, 1);
+});
+
+test('changing the top-up after a run starts is blocked like any other CSV change', async () => {
+  const s = await setup(undefined, gas);
+  await s.sender(s.prepared.rows[0]);
+  await assert.rejects(preparePayments({ ...s, topUp: gas * 2n }), /different CSV/);
+  await assert.rejects(preparePayments({ ...s, topUp: 0n }), /different CSV/);
 });

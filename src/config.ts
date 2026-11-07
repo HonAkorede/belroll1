@@ -1,7 +1,7 @@
 import { base, baseSepolia } from 'viem/chains';
 import type { Address } from 'viem';
 
-export const APP_NAME = 'Belroll';
+export const APP_NAME = 'Nightroll';
 
 export const NETWORKS = {
   'base-sepolia': {
@@ -35,5 +35,6 @@ export const MAX_ROWS = 500;
 export const RECOVERY_WINDOW_MS = 12 * 60 * 60 * 1000;
 // sepolia.base.org rejects eth_getLogs spans over 200 blocks (error -32614).
 export const LOG_CHUNK_BLOCKS = 200n;
+// Storage names keep the earlier project name so runs in progress survive the rename.
 export const JOURNAL_KEY = 'belroll.journal.v2';
 export const RECEIPT_TIMEOUT_MS = 120_000;

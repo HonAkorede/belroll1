@@ -3,17 +3,20 @@ import { CHAIN_ID, JOURNAL_KEY, NETWORK, RECOVERY_WINDOW_MS } from './config';
 import type { CsvRow } from './csv';
 import { announcementMetadata, generateStealthPayment, type StealthPayment } from './stealth';
 
-export type PaymentStatus = 'ready' | 'pending' | 'transferred' | 'sent' | 'failed' | 'unresolved';
+export type PaymentStatus = 'ready' | 'pending' | 'transferred' | 'announced' | 'sent' | 'failed' | 'unresolved';
 export interface PaymentRow extends CsvRow, StealthPayment {
   key: string;
   payloadHash: string;
+  /** ETH for the recipient's gas, in wei. "0" when the run has no top-up. */
+  topUpWei: string;
   status: PaymentStatus;
   error?: string;
   transferTx?: Hex;
   announceTx?: Hex;
+  topUpTx?: Hex;
   sentAt?: string;
 }
-type JournalState = 'pending' | 'transferred' | 'sent' | 'failed' | 'unresolved';
+type JournalState = 'pending' | 'transferred' | 'announced' | 'sent' | 'failed' | 'unresolved';
 interface Entry extends StealthPayment {
   payloadHash: string;
   state: JournalState;
@@ -21,6 +24,7 @@ interface Entry extends StealthPayment {
   fromBlock: string;
   transferTx?: Hex;
   announceTx?: Hex;
+  topUpTx?: Hex;
   sentAt?: string;
 }
 interface JournalData {
@@ -36,12 +40,14 @@ export interface ChainClient {
   getAccount(): Promise<Address | undefined>;
   getBlockNumber(): Promise<bigint>;
   usdcBalance(owner: Address): Promise<bigint>;
+  ethBalance(owner: Address): Promise<bigint>;
   supportsBatch(): Promise<boolean>;
   /** Resolves with the transaction hash once the wallet has signed and broadcast. */
   sendTransfer(to: Address, amount: bigint): Promise<Hex>;
   sendAnnounce(payment: StealthPayment, metadata: Hex): Promise<Hex>;
-  /** Transfer and announce atomically (EIP-5792). Resolves once included. */
-  sendBatch(to: Address, amount: bigint, payment: StealthPayment, metadata: Hex): Promise<{ hash: Hex; ok: boolean }>;
+  sendEth(to: Address, value: bigint): Promise<Hex>;
+  /** Transfer, announce and (when topUp > 0) send gas ETH atomically (EIP-5792). Resolves once included. */
+  sendBatch(to: Address, amount: bigint, payment: StealthPayment, metadata: Hex, topUp: bigint): Promise<{ hash: Hex; ok: boolean }>;
   /** True when the transaction succeeded, false when it reverted. Throws on timeout. */
   confirm(hash: Hex): Promise<boolean>;
   findTransfer(from: Address, to: Address, amount: bigint, fromBlock: bigint): Promise<Hex | null>;
@@ -50,10 +56,10 @@ export interface ChainClient {
 
 const hash64 = /^[a-f0-9]{64}$/, txHash = /^0x[a-f0-9]{64}$/i;
 const validEntry = (key: string, e: Entry) => /^belroll_[a-f0-9]{64}$/.test(key) && !!e
-  && ['pending', 'transferred', 'sent', 'failed', 'unresolved'].includes(e.state) && hash64.test(e.payloadHash)
+  && ['pending', 'transferred', 'announced', 'sent', 'failed', 'unresolved'].includes(e.state) && hash64.test(e.payloadHash)
   && Number.isFinite(e.attemptedAt) && /^\d+$/.test(e.fromBlock) && /^0x[a-f0-9]{40}$/i.test(e.stealthAddress)
   && /^0x0[23][a-f0-9]{64}$/.test(e.ephemeralPublicKey) && /^0x[a-f0-9]{2}$/.test(e.viewTag)
-  && [e.transferTx, e.announceTx].every(h => h === undefined || txHash.test(h))
+  && [e.transferTx, e.announceTx, e.topUpTx].every(h => h === undefined || txHash.test(h))
   && (e.state !== 'sent' || (!!e.transferTx && !!e.announceTx && !!e.sentAt && Number.isFinite(Date.parse(e.sentAt))));
 
 export class PaymentJournal {
@@ -112,36 +118,47 @@ export async function assertWallet(chain: Pick<ChainClient, 'getChainId' | 'getA
 export async function preparePayments(args: {
   chain: ChainClient; owner: Address; reference: string; rows: CsvRow[];
   journal: PaymentJournal; guard?: () => void;
+  /** Wei of ETH to send each one-time address for withdrawal gas; 0 for none. */
+  topUp?: bigint;
 }) {
   const { chain, owner, rows, journal } = args;
+  const topUp = args.topUp ?? 0n;
+  if (topUp < 0n) throw new Error('The gas top-up cannot be negative.');
+  // Runs without a top-up hash exactly as before it existed, so earlier journals still resume.
+  const withTopUp = (data: unknown[]) => topUp ? [...data, topUp.toString()] : data;
   await assertWallet(chain, owner, args.guard);
   const reference = args.reference.trim();
   if (!reference || reference.length > 120) throw new Error('Enter a pay run reference of 1 to 120 characters. Keep it unchanged when resuming.');
   const runKey = await digest([CHAIN_ID, owner.toLowerCase(), reference]);
-  const fingerprint = await digest(rows.map(({ name, metaAddress, atomic }) => [name, metaAddress, atomic]));
+  const fingerprint = await digest(withTopUp(rows.map(({ name, metaAddress, atomic }) => [name, metaAddress, atomic])));
   journal.assertRun(runKey, fingerprint);
   const prepared: PaymentRow[] = [];
   for (const row of rows) {
     args.guard?.();
     const key = 'belroll_' + await digest([runKey, prepared.length]);
-    const payloadHash = await digest([row.metaAddress, row.atomic, NETWORK.usdc, CHAIN_ID]);
+    const payloadHash = await digest(withTopUp([row.metaAddress, row.atomic, NETWORK.usdc, CHAIN_ID]));
     const entry = journal.get(key);
     if (entry && entry.payloadHash !== payloadHash) throw new Error(`Line ${row.line}: the recipient or amount changed after an attempt. Sending is blocked. Reconcile this payment on BaseScan.`);
     // Reuse the one-time address of any earlier attempt so a resume can never pay a second address.
     const stealth: StealthPayment = entry
       ? { stealthAddress: entry.stealthAddress, ephemeralPublicKey: entry.ephemeralPublicKey, viewTag: entry.viewTag }
       : generateStealthPayment(row.metaAddress);
-    prepared.push({ ...row, ...stealth, key, payloadHash,
+    prepared.push({ ...row, ...stealth, key, payloadHash, topUpWei: topUp.toString(),
       status: entry?.state === 'pending' ? 'unresolved' : entry?.state ?? 'ready',
-      transferTx: entry?.transferTx, announceTx: entry?.announceTx, sentAt: entry?.sentAt });
+      transferTx: entry?.transferTx, announceTx: entry?.announceTx, topUpTx: entry?.topUpTx, sentAt: entry?.sentAt });
   }
-  const balance = await chain.usdcBalance(owner);
+  const [balance, ethBalance] = await Promise.all([chain.usdcBalance(owner), chain.ethBalance(owner)]);
   await assertWallet(chain, owner, args.guard);
-  return { rows: prepared, runKey, fingerprint, balance };
+  return { rows: prepared, runKey, fingerprint, balance, ethBalance, topUp };
 }
 
+/** USDC still to send: rows whose transfer has not landed. */
 export function remainingAtomic(rows: PaymentRow[]) {
-  return rows.filter(r => r.status !== 'sent' && r.status !== 'transferred').reduce((total, r) => total + BigInt(r.atomic), 0n);
+  return rows.filter(r => !['sent', 'transferred', 'announced'].includes(r.status)).reduce((total, r) => total + BigInt(r.atomic), 0n);
+}
+/** Gas top-up ETH still to send. */
+export function remainingTopUp(rows: PaymentRow[]) {
+  return rows.filter(r => r.status !== 'sent').reduce((total, r) => total + BigInt(r.topUpWei), 0n);
 }
 
 function causes(error: unknown): { code?: unknown; name?: unknown; shortMessage?: unknown; message?: unknown; details?: unknown }[] {
@@ -167,7 +184,8 @@ export function paymentError(error: unknown): string {
 }
 
 /** All sending goes through this factory's single sendPayment(row) function.
- * Each row is a USDC transfer to its one-time address, then an ERC-5564 announcement.
+ * Each row is a USDC transfer to its one-time address, then an ERC-5564 announcement,
+ * then (optionally) a small ETH top-up so the recipient can pay withdrawal gas.
  * The journal is written before every wallet request, and earlier attempts are
  * looked up on-chain before anything is sent again.
  */
@@ -183,32 +201,36 @@ export function createPaymentSender(args: {
     if (previous && previous.payloadHash !== row.payloadHash) throw new Error('Payment details changed. Sending is blocked to protect this run.');
     if (previous && previous.stealthAddress !== row.stealthAddress) throw new Error('The one-time address changed. Sending is blocked to protect this run.');
     if (previous?.state === 'sent') {
-      const sent = { ...row, status: 'sent' as const, transferTx: previous.transferTx, announceTx: previous.announceTx, sentAt: previous.sentAt, error: undefined };
+      const sent = { ...row, status: 'sent' as const, transferTx: previous.transferTx, announceTx: previous.announceTx, topUpTx: previous.topUpTx, sentAt: previous.sentAt, error: undefined };
       onUpdate(sent); return sent;
     }
     const retrying = previous && previous.state !== 'failed';
     if (retrying && now() - previous.attemptedAt >= RECOVERY_WINDOW_MS)
       throw new Error(`Line ${row.line}: automatic recovery has expired. Do not resend or create a new reference for this payment. Check ${row.stealthAddress} on BaseScan.`);
-    const amount = BigInt(row.atomic);
+    const amount = BigInt(row.atomic), topUp = BigInt(row.topUpWei);
     const metadata = announcementMetadata(row.viewTag, NETWORK.usdc, amount);
     const fromBlock = retrying ? BigInt(previous.fromBlock) : await chain.getBlockNumber();
     let entry: Entry = retrying ? previous : {
       payloadHash: row.payloadHash, stealthAddress: row.stealthAddress, ephemeralPublicKey: row.ephemeralPublicKey, viewTag: row.viewTag,
       state: 'pending', attemptedAt: now(), fromBlock: fromBlock.toString(),
     };
-    let current: PaymentRow = { ...row, status: entry.state === 'transferred' ? 'transferred' : 'pending', error: undefined };
+    let current: PaymentRow = { ...row, status: entry.state === 'transferred' || entry.state === 'announced' ? entry.state : 'pending', error: undefined };
     const save = (patch: Partial<Entry>, status?: PaymentStatus, extra: Partial<PaymentRow> = {}) => {
       entry = { ...entry, ...patch }; journal.put(row.key, entry);
       if (status) { current = { ...current, status, ...extra }; onUpdate(current); }
     };
-    const finish = (announceTx: Hex) => {
+    const complete = (topUpTx?: Hex) => {
       const sentAt = new Date(now()).toISOString();
-      save({ state: 'sent', announceTx, sentAt }, 'sent', { announceTx, transferTx: entry.transferTx, sentAt });
+      save({ state: 'sent', topUpTx, sentAt }, 'sent', { announceTx: entry.announceTx, transferTx: entry.transferTx, topUpTx, sentAt });
+    };
+    const announcedWith = (announceTx: Hex) => {
+      if (topUp) save({ state: 'announced', announceTx }, 'announced', { announceTx });
+      else { entry = { ...entry, announceTx }; complete(); }
     };
 
     try {
       // Phase 1: the USDC transfer. Never send it twice.
-      if (entry.state !== 'transferred') {
+      if (entry.state !== 'transferred' && entry.state !== 'announced') {
         let landed = retrying ? await chain.findTransfer(owner, row.stealthAddress, amount, fromBlock) : null;
         if (!landed && retrying && entry.transferTx) {
           if (await chain.confirm(entry.transferTx)) landed = entry.transferTx;
@@ -223,10 +245,12 @@ export function createPaymentSender(args: {
           // This durable write MUST finish before a wallet request can happen.
           save({ state: 'pending', attemptedAt: entry.state === 'failed' ? now() : entry.attemptedAt }, 'pending');
           if (await chain.supportsBatch()) {
-            const { hash, ok } = await chain.sendBatch(row.stealthAddress, amount, row, metadata);
-            if (!ok) { save({ state: 'failed' }, 'failed', { error: 'The batch reverted. Nothing was paid. Check your USDC balance, then resume.' }); return current; }
+            const { hash, ok } = await chain.sendBatch(row.stealthAddress, amount, row, metadata, topUp);
+            if (!ok) { save({ state: 'failed' }, 'failed', { error: 'The batch reverted. Nothing was paid. Check your USDC and ETH balances, then resume.' }); return current; }
             save({ state: 'transferred', transferTx: hash }, 'transferred', { transferTx: hash });
-            finish(hash); return current;
+            announcedWith(hash);
+            if (topUp) complete(hash);
+            return current;
           }
           const hash = await chain.sendTransfer(row.stealthAddress, amount);
           save({ transferTx: hash });
@@ -235,15 +259,31 @@ export function createPaymentSender(args: {
         }
       }
       // Phase 2: the announcement. A duplicate is harmless, but look first anyway.
-      args.guard?.();
-      const announced = retrying ? await chain.findAnnouncement(row.stealthAddress, fromBlock) : null;
-      if (announced) { finish(announced); return current; }
-      const hash = await chain.sendAnnounce(row, metadata);
-      if (!await chain.confirm(hash)) throw new Error('The announcement reverted. The USDC has arrived; resume to announce again.');
-      finish(hash);
+      if (entry.state !== 'announced') {
+        args.guard?.();
+        const announced = retrying ? await chain.findAnnouncement(row.stealthAddress, fromBlock) : null;
+        if (announced) announcedWith(announced);
+        else {
+          const hash = await chain.sendAnnounce(row, metadata);
+          if (!await chain.confirm(hash)) throw new Error('The announcement reverted. The USDC has arrived; resume to announce again.');
+          announcedWith(hash);
+        }
+      }
+      // Phase 3: the gas top-up. Only this run sends to a fresh one-time address, so any ETH
+      // there means a top-up already landed. A duplicate would only cost the small top-up.
+      if (topUp && entry.state === 'announced') {
+        args.guard?.();
+        if (entry.topUpTx && await chain.confirm(entry.topUpTx).catch(() => false)) { complete(entry.topUpTx); return current; }
+        if (await chain.ethBalance(row.stealthAddress) > 0n) { complete(entry.topUpTx); return current; }
+        const hash = await chain.sendEth(row.stealthAddress, topUp);
+        save({ topUpTx: hash });
+        if (!await chain.confirm(hash)) throw new Error('The gas top-up reverted.');
+        complete(hash);
+      }
     } catch (error) {
       const message = paymentError(error);
       if (entry.state === 'transferred') current = { ...current, status: 'transferred', error: `The USDC has arrived, but the announcement was not published. ${message}` };
+      else if (entry.state === 'announced') current = { ...current, status: 'announced', error: `The USDC has arrived and is announced, but the gas top-up was not sent. ${message}` };
       else {
         const state = isRejection(error) ? 'failed' : 'unresolved';
         current = { ...current, status: state, error: message };

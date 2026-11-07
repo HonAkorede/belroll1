@@ -47,6 +47,17 @@ export function generateKeys(chain: string): StealthKeys {
   };
 }
 
+/** Rebuilds the key set (and its meta-address) from the two private keys. */
+export function keysFromPrivateKeys(chain: string, spendingPrivateKey: Hex, viewingPrivateKey: Hex): StealthKeys {
+  for (const key of [spendingPrivateKey, viewingPrivateKey])
+    if (!/^0x[a-f0-9]{64}$/i.test(key) || !secp256k1.utils.isValidPrivateKey(hexToBytes(key))) throw new Error('Each private key must be 0x followed by 64 hex characters.');
+  return {
+    spendingPrivateKey: spendingPrivateKey.toLowerCase() as Hex,
+    viewingPrivateKey: viewingPrivateKey.toLowerCase() as Hex,
+    metaAddress: formatMetaAddress(chain, bytesToHex(secp256k1.getPublicKey(hexToBytes(spendingPrivateKey), true)), bytesToHex(secp256k1.getPublicKey(hexToBytes(viewingPrivateKey), true))),
+  };
+}
+
 // keccak256 of the compressed ECDH point, reduced into the scalar field.
 function hashedSecret(privateKey: Uint8Array | Hex, publicKey: Hex) {
   const hash = keccak256(secp256k1.getSharedSecret(typeof privateKey === 'string' ? hexToBytes(privateKey) : privateKey, hexToBytes(publicKey), true));
@@ -74,6 +85,16 @@ export function generateStealthPayment(metaAddress: string, ephemeralPrivateKey 
 export function stealthPrivateKey(keys: Pick<StealthKeys, 'spendingPrivateKey' | 'viewingPrivateKey'>, ephemeralPublicKey: Hex): Hex {
   const { scalar } = hashedSecret(keys.viewingPrivateKey, ephemeralPublicKey);
   return toHex((BigInt(keys.spendingPrivateKey) + scalar) % N, { size: 32 });
+}
+
+/** Recipient side: the stealth address an announcement pays, if it is ours. The view tag rejects ~255/256 others cheaply. */
+export function checkAnnouncement(keys: Pick<StealthKeys, 'spendingPrivateKey' | 'viewingPrivateKey'>, ephemeralPublicKey: Hex, metadata: Hex, stealthAddress: Address): boolean {
+  if (!/^0x0[23][a-f0-9]{64}$/i.test(ephemeralPublicKey) || metadata.length < 4) return false;
+  let hashed: ReturnType<typeof hashedSecret>;
+  try { hashed = hashedSecret(keys.viewingPrivateKey, ephemeralPublicKey); } catch { return false; }
+  if (hashed.hash.slice(2, 4) !== metadata.slice(2, 4).toLowerCase()) return false;
+  const spendingPublicKey = bytesToHex(secp256k1.getPublicKey(hexToBytes(keys.spendingPrivateKey), true));
+  return stealthAddressFrom(spendingPublicKey, hashed.scalar) === getAddress(stealthAddress);
 }
 
 /** Announcement metadata: view tag, then transfer selector, token address and amount. */
