@@ -55,7 +55,7 @@ export function GetPaidPage() {
       <div className="section-heading"><div><h2 id="keys-title">1. Generate your keys</h2><p>Created in this browser. Nightroll never sees them.</p></div>
         <button className="button primary" onClick={() => void generate()} disabled={!!keys && !saved}><Icon name="lock" size={16}/>{keys ? 'Generate new keys' : 'Generate keys'}</button></div>
       {keys && <div className="get-paid-body">
-        <div className="notice warning" role="alert"><Icon name="info"/><div><strong>Save your key backup now.</strong> It is the only way to reach payments sent to you. If you lose it, the funds are gone. Never paste these keys into a chat, form or website.</div></div>
+        <div className="notice warning" role="alert"><Icon name="info"/><div><strong>Save your key backup now.</strong> It is the only way to reach payments sent to you. If you lose it, the funds are gone. Keep it private and never share its contents. Nightroll will never ask for your wallet’s recovery phrase.</div></div>
         <button className="button secondary" onClick={() => { downloadBackup(keys); setDownloaded(true); }}><Icon name="download" size={16}/>Download key backup</button>
         <label className="checkbox-line"><input type="checkbox" checked={saved} disabled={!downloaded} onChange={event => setSaved(event.target.checked)}/><span>I saved the backup file somewhere safe and private.</span></label>
       </div>}

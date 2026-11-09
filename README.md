@@ -47,7 +47,7 @@ Open `#/get-paid`, generate keys, download the key backup, confirm you saved it,
 
 Open `#/receive`:
 
-1. **Load keys** from this browser, the backup file, or by pasting the backup JSON or the two private keys (spending first). Backups from before the rename load too. The meta-address is always re-derived, and a backup whose keys do not match its meta-address is rejected.
+1. **Load keys** from this browser or the backup file. There is deliberately no box to paste keys into: wallet security scanners treat "paste your private key" pages as phishing. Backups from before the rename load too. The meta-address is always re-derived, and a backup whose keys do not match its meta-address is rejected.
 2. **Scan.** Reads `Announcement` events (scheme 1) from the Announcer, from the backup's start block or a date you pick, in 200-block chunks, 4 at a time with retries. About 33 hours of Base Sepolia took 23 seconds in testing; a week takes a few minutes. Each announcement is checked by view tag, then by the full stealth address, so other apps' announcements are skipped. Matches show the announced amount, the current USDC and ETH balance, and the announcement transaction.
 3. **Withdraw** to a wallet address you enter, one row at a time or **Withdraw all USDC**. Each one-time address signs its own USDC `transfer` with its derived key, locally over the RPC; no wallet extension is involved. Optionally the leftover ETH is sent too, keeping back the L2 gas and 1.5× Base's L1 data fee. Withdrawing links the one-time address to the destination on-chain, and sending several payments to one wallet links them to each other.
 

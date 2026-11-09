@@ -27,7 +27,6 @@ function remembered() { try { return loadKeys(localStorage); } catch { return nu
 export function ReceivePage() {
   const [keys, setKeys] = useState<KeyBundle | null>(null);
   const [saved] = useState(remembered);
-  const [pasted, setPasted] = useState('');
   const [keyError, setKeyError] = useState('');
   const [since, setSince] = useState(weekAgo);
   const [progress, setProgress] = useState<[number, number] | null>(null);
@@ -44,7 +43,7 @@ export function ReceivePage() {
   // Stealth keys are dropped when leaving the page.
   useEffect(() => () => abort.current?.abort(), []);
 
-  function adopt(bundle: KeyBundle) { setKeys(bundle); setKeyError(''); setPasted(''); setRows(null); setScanError(''); }
+  function adopt(bundle: KeyBundle) { setKeys(bundle); setKeyError(''); setRows(null); setScanError(''); }
   function loadText(text: string) {
     try { adopt(parseKeys(text)); } catch (e) { setKeyError(e instanceof Error ? e.message : 'These keys could not be read.'); }
   }
@@ -110,14 +109,13 @@ export function ReceivePage() {
     <div className="page-heading"><div><h1>Receive payments</h1><p>Load your stealth keys, find the payments sent to your meta-address and move them to a wallet you choose.</p></div></div>
 
     <section className="upload-panel" aria-labelledby="load-title">
-      <div className="section-heading"><div><h2 id="load-title">1. Load your keys</h2><p>Keys stay in this page’s memory. They are never sent anywhere.</p></div>{keys && <button className="button secondary compact" onClick={unload}>Unload keys</button>}</div>
+      <div className="section-heading"><div><h2 id="load-title">1. Load your Nightroll key backup</h2><p>It stays in this page’s memory and is never sent anywhere.</p></div>{keys && <button className="button secondary compact" onClick={unload}>Unload keys</button>}</div>
       <div className="get-paid-body">
         {keys ? <><p className="field-hint">Loaded meta-address</p><p className="full-address mono meta-address" dir="ltr">{keys.metaAddress}</p></> : <>
           {saved && <button className="button primary" onClick={() => adopt(saved)}><Icon name="lock" size={16}/>Use keys remembered in this browser</button>}
           <input className="visually-hidden" type="file" accept=".json,application/json" ref={fileInput} tabIndex={-1} aria-label="Key backup file" onChange={event => void loadFile(event.target.files?.[0])}/>
           <button className="button secondary" onClick={() => fileInput.current?.click()}><Icon name="upload" size={16}/>Open key backup file</button>
-          <div className="field paste-field"><label htmlFor="paste-keys">Or paste the backup, or your spending and viewing private keys</label><textarea id="paste-keys" rows={4} spellCheck={false} autoComplete="off" value={pasted} onChange={event => setPasted(event.target.value)}/><p>Only paste keys into this page. Never into a chat, email or another site.</p></div>
-          <button className="button secondary compact" disabled={!pasted.trim()} onClick={() => loadText(pasted)}>Load pasted keys</button>
+          <p className="field-hint">Use the backup file you downloaded on the Get paid page. Nightroll never asks for your wallet’s recovery phrase.</p>
         </>}
         {keyError && <div className="notice danger" role="alert"><Icon name="info"/><div>{keyError}</div></div>}
       </div>
