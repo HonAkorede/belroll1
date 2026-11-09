@@ -4,19 +4,78 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#111215" />
-    <meta name="description" content="Private USDC payroll on Base. Upload a CSV and pay each recipient at a fresh ERC-5564 stealth address. A client-side prototype on Base Sepolia." />
+    <meta name="description" content="Nightroll is private payroll on Base: upload a CSV and pay each person USDC at a fresh ERC-5564 stealth address that only they can find. Recipients are hidden; amounts and the treasury wallet stay public. Client-side, no backend." />
     <meta name="referrer" content="no-referrer" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; img-src 'self' data:; connect-src 'self' https://sepolia.base.org https://mainnet.base.org; object-src 'none'; base-uri 'self'; form-action 'none'" />
+    <!-- Absolute URLs for link previews and crawlers. Update when the custom domain is live. -->
+    <link rel="canonical" href="https://nightroll-theta.vercel.app/" />
+    <meta property="og:site_name" content="Nightroll" />
     <meta property="og:title" content="Nightroll | Private payroll on Base" />
-    <meta property="og:description" content="Your team. Your wallet. Stealth-address USDC payroll on Base." />
+    <meta property="og:description" content="Payroll for the night shift: USDC to hidden stealth addresses on Base. Pay a whole team from a CSV; each payment lands at a one-time address only its recipient can find." />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="./share.png" />
+    <meta property="og:url" content="https://nightroll-theta.vercel.app/" />
+    <meta property="og:image" content="https://nightroll-theta.vercel.app/share.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Nightroll: payroll for the night shift. USDC to hidden stealth addresses on Base." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Nightroll | Private payroll on Base" />
+    <meta name="twitter:description" content="Payroll for the night shift: USDC to hidden stealth addresses on Base." />
+    <meta name="twitter:image" content="https://nightroll-theta.vercel.app/share.png" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <title>Nightroll | Private payroll on Base</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Nightroll",
+        "url": "https://nightroll-theta.vercel.app/",
+        "applicationCategory": "FinanceApplication",
+        "operatingSystem": "Any modern browser with an Ethereum wallet",
+        "isAccessibleForFree": true,
+        "description": "Private payroll on Base. An employer uploads a CSV of names, stealth meta-addresses and USDC amounts; Nightroll derives a fresh ERC-5564 one-time address for every payment, sends USDC to it, publishes the announcement and optionally adds ETH for gas. Recipients scan announcements with their own keys and withdraw. Recipients are hidden on-chain; amounts and the treasury wallet are public.",
+        "featureList": [
+          "CSV payroll with strict validation and per-payment review",
+          "ERC-5564 stealth addresses: one new address per payment, derived in the browser",
+          "USDC transfers on Base Sepolia, with a build flag for Base mainnet",
+          "Optional ETH gas top-up per payment so recipients can withdraw",
+          "Double-payment protection: a local journal plus on-chain checks before any resend",
+          "Get paid page: recipients generate a stealth meta-address and key backup",
+          "Receive page: scan announcements, see balances, withdraw to any wallet",
+          "Shareable receipts with BaseScan links",
+          "Client-side only: no backend, no analytics"
+        ],
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "codeRepository": "https://github.com/HonAkorede/belroll1"
+      }
+    </script>
     <script type="module" crossorigin src="./assets/index-Du3UySE4.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-DXZ6zrnp.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"></div>
+    <noscript>
+      <main>
+        <h1>Nightroll: private payroll on Base</h1>
+        <p><strong>Payroll for the night shift: USDC to hidden stealth addresses on Base.</strong> Nightroll needs JavaScript and an Ethereum browser wallet to run. Here is what it does.</p>
+        <h2>The problem</h2>
+        <p>Paying a team on-chain publishes everyone's wallet and salary next to the company treasury. Anyone can see who works there and what they earn, and follow their money afterwards.</p>
+        <h2>How Nightroll works</h2>
+        <ol>
+          <li><strong>Get paid:</strong> each person generates an ERC-5564 stealth meta-address in the browser and shares it. Their keys never leave their device.</li>
+          <li><strong>Pay:</strong> the employer uploads a CSV (<code>name,stealth_meta_address,amount</code>), reviews every payment and approves them in their wallet. Every row goes to a brand-new one-time address, with an on-chain announcement and an optional ETH top-up for gas.</li>
+          <li><strong>Receive:</strong> the recipient scans announcements with their keys, sees the payments only they can match, and withdraws to any wallet.</li>
+        </ol>
+        <h2>What is private and what is not</h2>
+        <p>Hidden: who gets paid. Public: amounts, timing and the treasury wallet. Next steps include standard-sized payment chunks, a shielded pool and gasless withdrawals.</p>
+        <h2>Built to be safe to run</h2>
+        <ul>
+          <li>Strict CSV validation and a review of every payment before anything is sent.</li>
+          <li>A resumed payroll never pays the same person twice: a local journal plus on-chain checks before any resend.</li>
+          <li>Runs entirely in the browser on Base Sepolia, with a flag for Base mainnet. Receipts link to BaseScan.</li>
+        </ul>
+        <p>Source: <a href="https://github.com/HonAkorede/belroll1">github.com/HonAkorede/belroll1</a>. Machine-readable summary: <a href="./llms.txt">llms.txt</a>.</p>
+      </main>
+    </noscript>
   </body>
 </html>

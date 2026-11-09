@@ -1,0 +1,50 @@
+# Nightroll
+
+> Private payroll on Base. Pay a team in USDC from a CSV; every payment goes to a fresh ERC-5564 stealth address that only its recipient can find. Recipients are hidden on-chain; amounts and the treasury wallet are public. Runs entirely in the browser, with no backend.
+
+Live app: https://nightroll-theta.vercel.app/ (Base Sepolia testnet)
+Source: https://github.com/HonAkorede/belroll1
+
+## Problem
+
+Paying people on-chain exposes them. A normal USDC payroll publishes every employee's wallet next to the company treasury, so anyone can see who works there, what they earn and where their money goes afterwards. That stops companies and DAOs from paying people on-chain.
+
+## How it works
+
+1. Get paid (`/#/get-paid`): the recipient generates a stealth meta-address (`st:basesep:0x…`) in the browser, downloads a key backup and shares only the meta-address.
+2. Pay (`/`): the employer connects a browser wallet, uploads `name,stealth_meta_address,amount`, reviews every payment and approves. For each row Nightroll derives a one-time stealth address, sends USDC to it, publishes the ERC-5564 announcement and, optionally, sends a small ETH top-up so the recipient can pay gas. Wallets that support EIP-5792 batching approve each payment once.
+3. Receive (`/#/receive`): the recipient loads their keys, scans announcements, sees the payments only their keys can match, and withdraws USDC (and leftover ETH) to any wallet. Each one-time address signs locally with its derived key.
+4. Receipts: each sent payment has a shareable receipt with BaseScan links.
+
+## Try it in about 5 minutes
+
+You need a browser wallet with a little Base Sepolia ETH and test USDC (faucet.circle.com).
+
+1. Open /#/get-paid, generate keys, download the backup, tick "Remember these keys", copy the meta-address.
+2. Make a CSV: `name,stealth_meta_address,amount` then `Me,<your meta-address>,1.5`.
+3. On the payroll page, connect the wallet, upload the CSV, tick "Also send ETH for gas", review and send.
+4. Open /#/receive, load the remembered keys, scan, and withdraw to any address.
+
+## Reliability
+
+- Strict CSV parsing: one bad row rejects the file with line numbers; amounts use exact integer maths.
+- A resumed payroll never pays the same person twice: a local journal is written before each wallet request, and the chain is checked (Transfer and Announcement logs, the address's balance) before anything is resent.
+- Rows run one at a time with pause and resume; wrong network or account changes stop the run.
+- 53 unit tests cover the stealth cryptography, scanning, recovery paths and receipts.
+
+## Privacy, honestly
+
+Hidden: who gets paid. Public: amounts, timing and the treasury wallet. Paying many exact salaries at once, or a recipient later moving funds to a known wallet, can still link payments to people.
+
+## Roadmap
+
+- Split payments into standard amounts so salary sizes do not stand out.
+- Shuffled order and spread-out timing; withdrawal guidance against consolidating.
+- A shielded pool or confidential tokens to hide amounts.
+- Email or Google login with embedded wallets (Privy) so recipients need no crypto wallet.
+- Gasless withdrawals through a paymaster.
+- Meta-address lookup through the ERC-6538 registry.
+
+## Stack
+
+React, Vite, wagmi, viem, @noble/curves. ERC-5564 Announcer 0x55649E01B5Df198D18D95b5cc5051630cfD45564 on Base Sepolia. USDC 0x036CbD53842c5426634e7929541eC2318f3dCF7e. Built with Claude Code.
